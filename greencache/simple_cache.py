@@ -15,14 +15,16 @@ class SimpleCache:
                 self._map = {}
 
                 if exists(self._filepath):
-                        self._map = pickleload(self._filepath)
+                        with open(self._filepath , 'rb') as f:
+                                self._map = pickleload(f)
 
 
         def save(self):
-                pickledump(self._map, self._filepath)
+                with open(self._filepath, 'wb') as f:
+                        pickledump(self._map, f)
 
 
-        def add(self, key, value, pickle=False):
+        def set(self, key, value, pickle=False):
                 self._map[key] = value if not pickle else pickledumps(value)
                 self.save()
 
@@ -35,3 +37,4 @@ class SimpleCache:
         def clear(self):
                 if exists(self._filepath):
                         remove(self._filepath)
+                self._map = {}

@@ -1,5 +1,5 @@
 from os.path import join as joinpath, exists, expanduser
-from os import mkdirs, environ as env
+from os import makedirs, environ as env
 
 from redlib.api.system import is_windows
 
@@ -19,7 +19,7 @@ class DataDir:
 
         def check(self):
                 if not exists(self._path):
-                        mkdirs(self._path)
+                        makedirs(self._path)
 
 
         def get_fullpath(self):
