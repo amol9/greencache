@@ -49,10 +49,10 @@ class TestFileCache(TestCase):
                 return joinpath(self.root, dirpath)
 
 
-        def create_file_cache_obj(self, dirpath, max=None, max_index=None):
+        def create_file_cache_obj(self, dirpath, max_f=None, max_index=None):
                 cfg = FileCacheConfig()
                 cfg.dirpath = self.get_root_path(dirpath)
-                cfg.max = max or cfg.max
+                cfg.max = max_f or cfg.max
                 cfg.max_index = max_index or cfg.max_index
 
                 fc = FileCache(config=cfg)
@@ -72,8 +72,10 @@ class TestFileCache(TestCase):
                         content and f.write(content)
 
 
-        # test: roll over
+        # test: roll over, get by index
         # test: exc on not found
+        # test: make most recent
+
         
         def test_with_content(self):
                 fc = self.create_file_cache_obj('test_cache')
@@ -117,7 +119,7 @@ class TestFileCache(TestCase):
 
         def test_max_limit(self):
                 '''
-                Tests that the number of files is limited to max.
+                Tests that the number of files is limited to max_f.
                 '''
 
                 fc = self.create_file_cache_obj('test_cache')
@@ -133,6 +135,40 @@ class TestFileCache(TestCase):
                         self.assertEqual(file_count(), 50)
 
                 self.assertEqual(max(fc.get_all_indices()), 59)
+
+
+        def test_rollover(self):
+                '''
+                Add max_index number of files to cache.
+                Add one more and test if the cache rolls over.
+                Add one more and test if the appropriate index is removed from rollover map (and hence, raises an error).
+                '''
+
+                max_index = 100
+                max_f = 10
+
+                fc = self.create_file_cache_obj('test_cache', max_f=max_f, max_index=max_index)
+                fn = self.get_root_path('test.txt')
+                for i in range(0, max_index):
+                        self.create_file(fn, content=str(i + 1))
+                        fc.add(fn)
+
+                max_index_c = max(fc.get_all_indices())
+                self.assertEqual(max_index_c, max_index - 1)
+
+                fc.add(fn)
+                file_count = lambda : len(fc.get_all_files())
+                self.assertEqual(file_count(), max_f)
+                self.assertEqual(fc._index.current_index, max_f)
+                
+                
+                f = fc.get(index=max_index)
+                fi = fc._get_index_from_filename(f)
+                self.assertEqual(fi, max_f - 1)
+
+                fc.add(fn)
+                with self.assertRaises(FileCacheError):
+                        f = fc.get(index = max_f + 2)
 
 
 if __name__ == '__main__':

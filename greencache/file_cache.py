@@ -1,6 +1,6 @@
 from os.path import join as joinpath, exists, splitext, split
 from os import remove, makedirs
-from shutil import copy
+from shutil import copy, move
 from glob import glob
 
 from redlib.api.misc import md5hash
@@ -58,6 +58,11 @@ class FileCacheIndex:
                 self._store.clear()
 
 
+        def reset(self, start=None):
+                self._index = start or self._start
+                self.save()
+
+
         def save(self):
                 self._store.set(self._key, self._index)
 
@@ -81,6 +86,53 @@ class FileCacheIndex:
         current_index = property(get_index)
 
 
+class RollOverMap:
+
+        def __init__(self, key):
+                self._key = key
+                self.load()
+
+
+        def load(self):
+                data_dir = DataDir(g_config.home_dir_name)
+                self._store = SimpleCache(joinpath(data_dir.fullpath, g_config.file_cache_rollover_map))
+                self._map = self._store.get(self._key) or []
+
+        def save(self):
+                self._store.set(self._key, self._map, pickle=True)
+
+
+        def set(self, new_map):
+                self._map = new_map
+                self.save()
+
+
+        def new(self, old_index):
+                for o, n in self._map:
+                        if o == old_index:
+                                return n
+                return None
+
+
+        def remove(self, new_index):
+                idx = None
+                for (i, (o, n)) in enumerate(self._map):
+                        if n == new_index:
+                                idx = i
+                                break
+                if idx is not None:
+                        del self._map[idx]
+                        if len(self._map) == 0:
+                                self.clear()
+                        else:
+                                self.save()
+
+
+        def clear(self):
+                self._store.clear()
+                self._map = []
+
+
 class FileCacheError(Exception):
         pass
 
@@ -95,7 +147,8 @@ class FileCache:
                 self._config = config
                 self.check_config()
 
-                self._index = FileCacheIndex(self._config.hash(), start=1)
+                self._index = FileCacheIndex(self._config.hash(), start=1, max_index=self._config.max_index)
+                self._ro_map = RollOverMap(self._config.hash())
 
                 self.check_dir()
 
@@ -124,6 +177,7 @@ class FileCache:
                 copy(src_filepath, dest_filepath)
 
                 self.check_max()
+                index = self.check_for_rollover(int(index)) or index
 
                 return index
 
@@ -134,7 +188,20 @@ class FileCache:
                 if len(cached_files) <= self._config.max:
                         return
 
-                self.remove_multiple_files(sorted(cached_files[1:], reverse=True)[self._config.max - 1 : ])
+                mr = self._config.prefix
+                mr2 = mr + '_' + self._index.format(self._config.max_index)
+                rem = 0
+
+                n_cached_files = []
+                for f in cached_files:
+                        filename = split(f)[-1]
+                        name = splitext(filename)[0]
+                        if not (name == mr or name == mr2):
+                                n_cached_files.append(f)
+                        else:
+                                rem += 1
+
+                self.remove_multiple_files(sorted(n_cached_files, reverse=True)[self._config.max - rem : ])
 
 
         def move_most_recent_file_down(self):
@@ -150,33 +217,43 @@ class FileCache:
                                 + '.%s'%ext if (ext is not None and len(ext) > 0) else ''
                 dest_filepath = joinpath(self._config.dirpath, dest_filename)
 
-                copy(joinpath(self._config.dirpath, self._config.prefix + '.' + ext), dest_filepath)
+                move(joinpath(self._config.dirpath, self._config.prefix + '.' + ext), dest_filepath)
                 
-                self.check_for_rollover()
-
                 return int(index) + 1
 
 
         def check_for_rollover(self, index):
-                if index == self._config.max_index:
+                if (index) > self._config.max_index:
                         self.rollover()
+                        return self._index.current_index
+                else:
+                        return None
 
 
         def rollover(self):
                 indices = self.get_all_indices()
                 sorted_indices = sorted(indices)[1:]
 
-                sc = SimpleCache(g_config.file_cache_rollover_map)
-                sc.set(self._config.hash(), sorted_indices, pickle=True)
-
+                old_to_new_map = []
                 for i, o in enumerate(sorted_indices):
-                        ext = self.suffix_ext() # ??? INCOMPLETE
+                        filename = self._config.prefix + '_' + self._index.format(o)
+                        fullpath = self.suffix_ext(filename)
+                        ext = splitext(split(fullpath)[-1])[1]
+                        
+                        newname = self._config.prefix + '_' + self._index.format(i + 1) + ext
+                        newpath = joinpath(self._config.dirpath, newname)
+
+                        if not exists(newpath):
+                                move(fullpath, newpath)
+                                old_to_new_map.append((o, i + 1))
+
+                self._ro_map.set(old_to_new_map)
+                self._index.reset(start = old_to_new_map[-1][1] + 1)
 
 
         def get_most_recent_file_name_ext(self):
                 for f in self.get_all_files():
                         name, ext = splitext(split(f)[-1])
-                        #dbg()
                         if name == self._config.prefix:
                                 return name, ext[1:]
                 raise NoMostRecentFile()
@@ -184,6 +261,7 @@ class FileCache:
 
         def get(self, index=None, rel_index=None):
                 if index is not None:
+                        index = self._ro_map.new(index) or index
                         if index > self._index.current_index:
                                 raise FileCacheError('index greater than that of the last file added')
 
@@ -238,6 +316,17 @@ class FileCache:
                 self.remove_multiple_files(cached_files)
 
                 self._index.clear()
+                self._ro_map.clear()
+
+
+        def _get_index_from_filename(self, filename):
+                index = None
+                name_wo_ext = splitext(split(filename)[-1])[0]
+                try:
+                        index = int(name_wo_ext.split('_')[-1])
+                except ValueError:
+                        pass
+                return index
 
 
         def remove_multiple_files(self, filepath_list):
@@ -245,6 +334,7 @@ class FileCache:
                 for f in filepath_list:
                         try:
                                 remove(f)
+                                self._ro_map.remove(self._get_index_from_filename(f))
                         except (OSError, IOError) as e:
                                 err_msg += e.message
 
@@ -254,5 +344,9 @@ class FileCache:
 
         def make_most_recent(self, index):
                 filepath = self.get(index)
+                if filepath is None:
+                        raise FileCacheError('no file with given index')
+
                 self.move_most_recent_file_down()
-                copy(filepath, self._)
+
+                ##copy(filepath, )  LATER
