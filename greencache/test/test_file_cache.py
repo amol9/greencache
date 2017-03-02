@@ -27,7 +27,6 @@ class TestFileCache(TestCase):
 
 
         def tearDown(self):
-                #return
                 self.cleanup()
 
 
@@ -36,9 +35,6 @@ class TestFileCache(TestCase):
                         rmtree(self.root)
                 if exists(config.home_dir_name):
                         rmtree(config.home_dir_name)
-
-                '''sc = SimpleCache(joinpath(DataDir(config.home_dir_name).fullpath, config.file_cache_index_store_filename))
-                sc.clear()'''
 
 
         def test_cleanup(self):
@@ -70,11 +66,6 @@ class TestFileCache(TestCase):
         def create_file(self, filename, content=None):
                 with open(filename, 'w') as f:
                         content and f.write(content)
-
-
-        # test: roll over, get by index
-        # test: exc on not found
-        # test: make most recent
 
         
         def test_with_content(self):
@@ -108,8 +99,6 @@ class TestFileCache(TestCase):
                 for i in r:
                         fp = fc.get(index=i)
                         remove(fp)
-
-                print('removed %d files from cache'%len(r))
 
                 a = 0 if 0 in r else 1
                 for i in range(50, 60):
@@ -169,6 +158,29 @@ class TestFileCache(TestCase):
                 fc.add(fn)
                 with self.assertRaises(FileCacheError):
                         f = fc.get(index = max_f + 2)
+
+
+        def test_make_most_recent(self):
+                fc = self.create_file_cache_obj('test_cache')
+                fn = self.get_root_path('test.txt')
+                for i in range(0, 10):
+                        self.create_file(fn, content=str(i + 1))
+                        fc.add(fn)
+
+                oldpath = fc.get(index=9)
+                index, filepath = fc.make_most_recent(index=9)
+                self.assertEqual(index, 11)
+                self.assertIsNotNone(filepath)
+                self.assertExists(filepath)
+                self.assertNotExists(oldpath)
+
+
+        def assertExists(self, filepath):
+                self.assertTrue(exists(filepath))
+
+
+        def assertNotExists(self, filepath):
+                self.assertFalse(exists(filepath))
 
 
 if __name__ == '__main__':

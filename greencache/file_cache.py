@@ -1,4 +1,4 @@
-from os.path import join as joinpath, exists, splitext, split
+from os.path import join as joinpath, exists, splitext, split, abspath
 from os import remove, makedirs
 from shutil import copy, move
 from glob import glob
@@ -31,12 +31,11 @@ class FileCacheConfig:
 
 
         def hash(self):
-                return md5hash(self.dirpath)    #todo: make abs
+                return md5hash(abspath(self.dirpath))    #todo: make abs
 
 
 class FileCacheIndex:
 
-        # reset after max index
         def __init__(self, key, start=0, max_index=10000):
                 self._start = start
                 self._key = key
@@ -347,6 +346,11 @@ class FileCache:
                 if filepath is None:
                         raise FileCacheError('no file with given index')
 
-                self.move_most_recent_file_down()
+                index = self.move_most_recent_file_down()
 
-                ##copy(filepath, )  LATER
+                ext = splitext(split(filepath)[-1])[1]
+                newpath = joinpath(self._config.dirpath, self._config.prefix + ext)
+
+                move(filepath, newpath)
+
+                return index, newpath
